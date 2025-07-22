@@ -39,11 +39,32 @@ log_section() {
 }
 
 # Environment loading
+# Environment loading with smart path detection
 load_env() {
-    local env_file="${1:-$(dirname "${BASH_SOURCE[1]}")/.env}"
+    local env_file="$1"
+    
+    # If no file specified, auto-detect based on calling script location
+    if [[ -z "$env_file" ]]; then
+        local script_dir="$(cd "$(dirname "${BASH_SOURCE[1]}")" && pwd)"
+        
+        # If calling script is in a 'scripts' subdirectory, go up one level
+        if [[ "$(basename "$script_dir")" == "scripts" ]]; then
+            env_file="$(dirname "$script_dir")/.env"
+        else
+            env_file="$script_dir/.env"
+        fi
+    fi
     
     if [[ ! -f "$env_file" ]]; then
         log_error ".env file not found at $env_file"
+        return 1
+    fi
+    
+    # Enhanced syntax checking with better error message
+    if ! bash -n "$env_file" 2>/dev/null; then
+        log_error ".env file has syntax errors"
+        log_info "Check your .env file for syntax issues (quotes, spaces, special characters, etc.)"
+        log_info "Common issues: unquoted values with spaces, missing quotes, invalid variable names"
         return 1
     fi
     
