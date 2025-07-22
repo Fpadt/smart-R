@@ -1,0 +1,391 @@
+# ==============================================================================
+# Default Traefik Ingress Routes and Services
+# Provides default routes, error pages, and example configurations
+# ==============================================================================
+
+---
+# Default Backend Service (for handling unmatched routes)
+apiVersion: v1
+kind: Service
+metadata:
+  name: default-backend
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: default-backend
+    app.kubernetes.io/component: backend
+spec:
+  selector:
+    app.kubernetes.io/name: default-backend
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+    protocol: TCP
+
+---
+# Default Backend Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: default-backend
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: default-backend
+    app.kubernetes.io/component: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: default-backend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: default-backend
+    spec:
+      containers:
+      - name: default-backend
+        image: gcr.io/google_containers/defaultbackend:1.4
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            cpu: 10m
+            memory: 20Mi
+          limits:
+            cpu: 50m
+            memory: 50Mi
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 30
+          timeoutSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 5
+          timeoutSeconds: 5
+
+---
+# Error Pages Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: error-pages
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: error-pages
+    app.kubernetes.io/component: error-handler
+spec:
+  selector:
+    app.kubernetes.io/name: error-pages
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+    protocol: TCP
+
+---
+# Error Pages Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: error-pages
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: error-pages
+    app.kubernetes.io/component: error-handler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: error-pages
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: error-pages
+    spec:
+      containers:
+      - name: error-pages
+        image: tarampampam/error-pages:2.27.0
+        ports:
+        - containerPort: 8080
+        env:
+        - name: TEMPLATE_NAME
+          value: "ghost"
+        - name: SHOW_DETAILS
+          value: "false"
+        resources:
+          requests:
+            cpu: 5m
+            memory: 15Mi
+          limits:
+            cpu: 50m
+            memory: 50Mi
+
+---
+# Global HTTP to HTTPS Redirect
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: global-https-redirect
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: redirect
+spec:
+  entryPoints:
+    - web
+  routes:
+  - match: HostRegexp(`{host:.+}`)
+    kind: Rule
+    priority: 1
+    services:
+    - name: default-backend
+      port: 80
+    middlewares:
+    - name: https-redirect
+      namespace: ${TRAEFIK_NAMESPACE}
+
+---
+# Default HTTPS Route (catch-all for unmatched domains)
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: default-https-backend
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: default
+spec:
+  entryPoints:
+    - websecure
+  routes:
+  - match: HostRegexp(`{host:.+}`)
+    kind: Rule
+    priority: 1
+    services:
+    - name: default-backend
+      port: 80
+    middlewares:
+    - name: security-headers
+      namespace: ${TRAEFIK_NAMESPACE}
+  tls:
+    certResolver: letsencrypt
+
+---
+# Main Domain Root Route (if you want a specific landing page)
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: main-domain-root
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: main-route
+spec:
+  entryPoints:
+    - websecure
+  routes:
+  - match: Host(`${DOMAIN_PRIMARY}`) && Path(`/`)
+    kind: Rule
+    priority: 100
+    services:
+    - name: default-backend
+      port: 80
+    middlewares:
+    - name: security-chain
+      namespace: ${TRAEFIK_NAMESPACE}
+  tls:
+    certResolver: letsencrypt
+
+---
+# API Routes (example for API endpoints)
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: api-routes
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: api
+spec:
+  entryPoints:
+    - websecure
+  routes:
+  - match: Host(`api.${DOMAIN_PRIMARY}`) || (Host(`${DOMAIN_PRIMARY}`) && PathPrefix(`/api/`))
+    kind: Rule
+    priority: 200
+    services:
+    - name: default-backend
+      port: 80
+    middlewares:
+    - name: api-security-chain
+      namespace: ${TRAEFIK_NAMESPACE}
+  tls:
+    certResolver: letsencrypt
+
+---
+# Health Check Route (for monitoring)
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: health-check
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: health
+spec:
+  entryPoints:
+    - websecure
+  routes:
+  - match: Host(`${DOMAIN_PRIMARY}`) && (Path(`/health`) || Path(`/healthz`) || Path(`/ping`))
+    kind: Rule
+    priority: 300
+    services:
+    - name: default-backend
+      port: 80
+    middlewares:
+    - name: rate-limit
+      namespace: ${TRAEFIK_NAMESPACE}
+  tls:
+    certResolver: letsencrypt
+
+---
+# Metrics Route (for Prometheus monitoring)
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: metrics-route
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: metrics
+spec:
+  entryPoints:
+    - websecure
+  routes:
+  - match: Host(`metrics.${DOMAIN_PRIMARY}`) && Path(`/metrics`)
+    kind: Rule
+    priority: 250
+    services:
+    - name: traefik
+      port: 9100
+    middlewares:
+    - name: ip-whitelist-admin
+      namespace: ${TRAEFIK_NAMESPACE}
+    - name: basic-auth
+      namespace: ${TRAEFIK_NAMESPACE}
+  tls:
+    certResolver: letsencrypt
+
+---
+# TCP Route Example (for non-HTTP services)
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRouteTCP
+metadata:
+  name: tcp-example
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: tcp
+spec:
+  entryPoints:
+    - tcp-port
+  routes:
+  - match: HostSNI(`tcp.${DOMAIN_PRIMARY}`)
+    services:
+    - name: tcp-service-example
+      port: 1234
+  tls:
+    certResolver: letsencrypt
+
+---
+# UDP Route Example (for UDP services)
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRouteUDP
+metadata:
+  name: udp-example
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: udp
+spec:
+  entryPoints:
+    - udp-port
+  routes:
+  - services:
+    - name: udp-service-example
+      port: 5678
+
+---
+# Weighted Services Example (for canary deployments)
+apiVersion: traefik.containo.us/v1alpha1
+kind: TraefikService
+metadata:
+  name: weighted-service
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: weighted-service
+spec:
+  weighted:
+    services:
+    - name: app-v1
+      port: 80
+      weight: 80  # 80% of traffic
+    - name: app-v2
+      port: 80
+      weight: 20  # 20% of traffic (canary)
+
+---
+# Mirroring Service Example (for traffic mirroring)
+apiVersion: traefik.containo.us/v1alpha1
+kind: TraefikService
+metadata:
+  name: mirror-service
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: mirror-service
+spec:
+  mirroring:
+    name: production-service
+    port: 80
+    mirrors:
+    - name: test-service
+      port: 80
+      percent: 10  # Mirror 10% of traffic to test service
+
+---
+# Circuit Breaker Example
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: circuit-breaker
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: middleware
+spec:
+  circuitBreaker:
+    expression: "NetworkErrorRatio() > 0.3 || ResponseCodeRatio(500, 600, 0, 600) > 0.3"
+    checkPeriod: "3s"
+    fallbackDuration: "10s"
+    recoveryDuration: "10s"
+
+---
+# Retry Middleware Example
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: retry
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: middleware
+spec:
+  retry:
+    attempts: 3
+    initialInterval: "100ms"

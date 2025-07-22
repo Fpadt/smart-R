@@ -1,0 +1,147 @@
+# Traefik Helm Values Configuration - Minimal Working Version
+# Compatible with Chart v36.3.0
+
+# Global Arguments
+globalArguments:
+  - "--global.checknewversion"
+  - "--global.sendanonymoususage=false"
+
+# Additional Arguments
+additionalArguments:
+  - "--log.level=${TRAEFIK_LOG_LEVEL}"
+  - "--accesslog=true"
+  - "--accesslog.format=json"
+  - "--entrypoints.websecure.http.tls=true"
+  - "--providers.kubernetescrd.ingressclass=${INGRESS_CLASS}"
+
+# Service Configuration  
+service:
+  enabled: true
+  type: ${SERVICE_TYPE}
+  annotations: {}
+  labels: {}
+  spec:
+    loadBalancerIP: ${PUBLIC_IP}
+  
+# Port Configuration
+ports:
+  traefik:
+    port: 9000
+    expose:
+      default: false
+    protocol: TCP
+  web:
+    port: 8000
+    expose:
+      default: true
+    exposedPort: 80
+    protocol: TCP
+    nodePort: 32080
+  websecure:
+    port: 8443
+    expose:
+      default: true
+    exposedPort: 443
+    protocol: TCP
+    nodePort: 32443
+    tls:
+      enabled: true
+  metrics:
+    port: 9100
+    expose:
+      default: false
+    protocol: TCP
+
+# IngressRoute Dashboard
+ingressRoute:
+  dashboard:
+    enabled: ${TRAEFIK_DASHBOARD_ENABLED}
+    annotations: {}
+    labels: {}
+
+# Certificate Resolvers (Let's Encrypt)
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: ${LETSENCRYPT_EMAIL}
+      storage: /data/acme.json
+      keyType: EC256
+      dnsChallenge:
+        provider: cloudflare
+        resolvers:
+          - "1.1.1.1:53"
+          - "8.8.8.8:53"
+        delayBeforeCheck: 30
+
+# Environment Variables for Cloudflare
+env:
+  - name: CF_DNS_API_TOKEN
+    value: "${CF_DNS_API_TOKEN}"
+  - name: CF_ZONE_API_TOKEN  
+    value: "${CF_DNS_API_TOKEN}"
+  - name: CLOUDFLARE_EMAIL
+    value: "${CLOUDFLARE_EMAIL}"
+
+# Persistent Storage for ACME certificates
+persistence:
+  enabled: true
+  name: data
+  accessMode: ReadWriteOnce
+  size: 128Mi
+  storageClass: "local-path"
+  path: /data
+  annotations: {}
+
+# Resources
+resources:
+  requests:
+    cpu: ${TRAEFIK_CPU_REQUEST}
+    memory: ${TRAEFIK_MEMORY_REQUEST}
+  limits:
+    cpu: ${TRAEFIK_CPU_LIMIT}
+    memory: ${TRAEFIK_MEMORY_LIMIT}
+
+# Security Context
+securityContext:
+  capabilities:
+    drop: [ALL]
+  readOnlyRootFilesystem: true
+  runAsGroup: 65532
+  runAsNonRoot: true
+  runAsUser: 65532
+
+podSecurityContext:
+  fsGroup: 65532
+
+# Providers
+providers:
+  kubernetesCRD:
+    enabled: true
+    ingressClass: ${INGRESS_CLASS}
+    allowEmptyServices: false
+    allowExternalNameServices: false
+  kubernetesIngress:
+    enabled: true
+    ingressClass: ${INGRESS_CLASS}
+    allowEmptyServices: false
+    allowExternalNameServices: false
+
+# Metrics Configuration
+metrics:
+  prometheus:
+    addEntryPointsLabels: true
+    addServicesLabels: true
+    buckets: "0.1,0.3,1.2,5.0"
+
+# Logs
+logs:
+  general:
+    level: ${TRAEFIK_LOG_LEVEL}
+  access:
+    enabled: true
+
+# API Configuration
+api:
+  dashboard: ${TRAEFIK_DASHBOARD_ENABLED}
+  debug: ${TRAEFIK_API_DEBUG}
+  insecure: ${TRAEFIK_API_INSECURE}

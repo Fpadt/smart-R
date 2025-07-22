@@ -1,0 +1,153 @@
+# ==============================================================================
+# Traefik Dashboard Ingress Configuration
+# Provides secure access to the Traefik dashboard with SSL and authentication
+# ==============================================================================
+
+---
+# Traefik Dashboard Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: traefik-dashboard
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: dashboard
+  annotations:
+    # Use Traefik ingress controller
+    kubernetes.io/ingress.class: "${INGRESS_CLASS}"
+    
+    # SSL/TLS configuration
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.tls.certresolver: "letsencrypt"
+    
+    # Security middlewares
+    traefik.ingress.kubernetes.io/router.middlewares: "${TRAEFIK_NAMESPACE}-dashboard-auth@kubernetescrd"
+    
+    # Priority for this route
+    traefik.ingress.kubernetes.io/router.priority: "100"
+    
+    # Entry points
+    traefik.ingress.kubernetes.io/router.entrypoints: "websecure"
+    
+spec:
+  tls:
+  - hosts:
+    - "${TRAEFIK_DASHBOARD_DOMAIN}"
+    secretName: traefik-dashboard-tls
+  
+  rules:
+  - host: "${TRAEFIK_DASHBOARD_DOMAIN}"
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: traefik
+            port:
+              number: 9000
+
+---
+# Alternative: IngressRoute for more advanced Traefik features
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: traefik-dashboard-secure
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: dashboard
+spec:
+  entryPoints:
+    - websecure
+  
+  routes:
+  - match: Host(`${TRAEFIK_DASHBOARD_DOMAIN}`)
+    kind: Rule
+    priority: 100
+    services:
+    - name: api@internal
+      kind: TraefikService
+    middlewares:
+    - name: dashboard-auth
+      namespace: ${TRAEFIK_NAMESPACE}
+  
+  tls:
+    certResolver: letsencrypt
+
+---
+# HTTP to HTTPS redirect for dashboard
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: traefik-dashboard-redirect
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: dashboard
+spec:
+  entryPoints:
+    - web
+  
+  routes:
+  - match: Host(`${TRAEFIK_DASHBOARD_DOMAIN}`)
+    kind: Rule
+    priority: 100
+    services:
+    - name: api@internal
+      kind: TraefikService
+    middlewares:
+    - name: https-redirect
+      namespace: ${TRAEFIK_NAMESPACE}
+
+---
+# Service Monitor for Prometheus (if using Prometheus monitoring)
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: traefik-dashboard
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: dashboard
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: traefik
+  endpoints:
+  - port: traefik
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+
+---
+# Network Policy for Dashboard Access (if network policies are enabled)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: traefik-dashboard-access
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: dashboard
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: traefik
+  policyTypes:
+  - Ingress
+  ingress:
+  # Allow dashboard access from anywhere (controlled by authentication)
+  - from: []
+    ports:
+    - protocol: TCP
+      port: 9000
+  # Allow metrics access from monitoring namespace
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9100
