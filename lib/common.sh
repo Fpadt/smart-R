@@ -38,10 +38,9 @@ log_section() {
     echo "----------------------------------------"
 }
 
-# Environment loading
 # Environment loading with smart path detection
 load_env() {
-    local env_file="$1"
+    local env_file="${1:-}"
     
     # If no file specified, auto-detect based on calling script location
     if [[ -z "$env_file" ]]; then
@@ -104,5 +103,21 @@ render_template() {
     fi
 }
 
+# Directory detection functions
+get_script_dir() {
+    echo "$(cd "$(dirname "${BASH_SOURCE[1]}")" && pwd)"
+}
+
+get_module_dir() {
+    local calling_script="${BASH_SOURCE[1]:-$0}"
+    local script_dir="$(cd "$(dirname "$calling_script")" && pwd)"
+    
+    if [[ "$(basename "$script_dir")" == "scripts" ]]; then
+        echo "$(dirname "$script_dir")"
+    else
+        echo "$script_dir"
+    fi
+}
+
 export -f log_info log_success log_warning log_error log_section
-export -f load_env render_template
+export -f load_env render_template get_script_dir get_module_dir

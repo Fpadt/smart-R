@@ -1,43 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 
-source "$(dirname "$(dirname "$(dirname "${BASH_SOURCE[0]}")")")/lib/common.sh"
+# Source common functions library
+source "../../../lib/common.sh"
 
-# Get script directory
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# Load environment variables
-load_env() {
-    local env_file="$SCRIPT_DIR/.env"
-    
-    if [[ ! -f "$env_file" ]]; then
-        log_error ".env file not found at $env_file"
-        exit 1
-    fi
-    
-    # Check .env file syntax before loading
-    if ! bash -n "$env_file"; then
-        log_error ".env file has syntax errors"
-        log_info "Check your .env file for syntax issues (quotes, spaces, etc.)"
-        exit 1
-    fi
-    
-    # Load environment variables quietly
-    set -a
-    source "$env_file" 2>/dev/null
-    set +a
-    
-    log_info "Environment variables loaded"
-    log_info "Domains: $DOMAIN_PRIMARY, $DOMAIN_SECONDARY"
-    log_info "Traefik namespace: $TRAEFIK_NAMESPACE"
-    
-    # Verify sensitive variables are loaded (without displaying them)
-    if [[ -n "${CF_DNS_API_TOKEN:-}" ]]; then
-        log_info "Cloudflare DNS token: loaded (${#CF_DNS_API_TOKEN} characters)"
-    else
-        log_warning "CF_DNS_API_TOKEN not found in .env"
-    fi
-}
+# Get directories using common functions
+SCRIPT_DIR=$(get_script_dir)
+MODULE_DIR=$(get_module_dir)
 
 # Check K3s cluster health
 check_k3s_cluster() {
@@ -240,7 +209,7 @@ setup_helm_repo() {
 check_templates() {
     log_section "Template Files Verification"
     
-    local templates_dir="$SCRIPT_DIR/templates"
+    local templates_dir="$MODULE_DIR/templates"
     
     if [[ ! -d "$templates_dir" ]]; then
         log_error "Templates directory not found: $templates_dir"
