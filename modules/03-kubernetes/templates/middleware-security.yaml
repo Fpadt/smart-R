@@ -1,0 +1,211 @@
+# ==============================================================================
+# Traefik Security Middlewares
+# These middlewares provide security hardening for all ingress traffic
+# ==============================================================================
+
+---
+# Security Headers Middleware
+# Adds comprehensive security headers to all responses
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: security-headers
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: middleware
+spec:
+  headers:
+    # Custom request headers
+    customRequestHeaders:
+      X-Forwarded-Proto: "https"
+    
+    # Security response headers
+    customResponseHeaders:
+      # Prevent indexing by search engines
+      X-Robots-Tag: "noindex,nofollow,nosnippet,noarchive,notranslate,noimageindex"
+      
+      # Frame protection
+      X-Frame-Options: "DENY"
+      
+      # Content type protection
+      X-Content-Type-Options: "nosniff"
+      
+      # Referrer policy
+      Referrer-Policy: "strict-origin-when-cross-origin"
+      
+      # Permissions policy (formerly Feature-Policy)
+      Permissions-Policy: "geolocation=(), microphone=(), camera=(), magnetometer=(), gyroscope=(), payment=(), usb=()"
+      
+      # HSTS (HTTP Strict Transport Security)
+      Strict-Transport-Security: "max-age=31536000; includeSubDomains; preload"
+      
+      # Content Security Policy
+      Content-Security-Policy: "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' https:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
+      
+      # Remove server identification
+      Server: ""
+      
+      # Cross-Origin policies
+      Cross-Origin-Embedder-Policy: "require-corp"
+      Cross-Origin-Opener-Policy: "same-origin"
+      Cross-Origin-Resource-Policy: "same-site"
+
+---
+# Rate Limiting Middleware
+# Protects against DoS attacks and abuse
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: rate-limit
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: middleware
+spec:
+  rateLimit:
+    burst: 100        # Allow bursts of up to 100 requests
+    average: 50       # Average 50 requests per second
+    period: "1m"      # Period for rate calculation
+    sourceCriterion:
+      ipStrategy:
+        depth: 1      # Consider the first IP in X-Forwarded-For
+
+---
+# Aggressive Rate Limiting for API endpoints
+# Use this for API endpoints that need stricter limits
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: api-rate-limit
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: middleware
+spec:
+  rateLimit:
+    burst: 20         # Lower burst for APIs
+    average: 10       # Lower average for APIs
+    period: "1m"
+    sourceCriterion:
+      ipStrategy:
+        depth: 1
+
+---
+# Compression Middleware
+# Reduces bandwidth usage and improves performance
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: compress
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: middleware
+spec:
+  compress:
+    excludedContentTypes:
+      - "image/png"
+      - "image/jpeg"
+      - "image/gif"
+      - "image/webp"
+      - "video/mp4"
+      - "video/webm"
+
+---
+# HTTPS Redirect Middleware
+# Ensures all traffic uses HTTPS
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: https-redirect
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: middleware
+spec:
+  redirectScheme:
+    scheme: "https"
+    permanent: true   # Use 301 redirect
+
+---
+# IP Whitelist Middleware (for admin access)
+# Restrict access to specific IP ranges
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: ip-whitelist-admin
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: middleware
+spec:
+  ipWhiteList:
+    sourceRange:
+      - "10.0.0.0/8"      # Private network ranges
+      - "172.16.0.0/12"   # Private network ranges
+      - "192.168.0.0/16"  # Private network ranges
+      # Add your specific IP ranges here
+      # - "${PUBLIC_IP}/32" # Uncomment and use your specific IP
+
+---
+# Error Page Middleware
+# Custom error pages for better user experience
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: error-pages
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: middleware
+spec:
+  errors:
+    status:
+      - "400-599"
+    service:
+      name: error-pages
+      port: 80
+    query: "/{status}.html"
+
+---
+# Chain all security middlewares together
+# Use this chain for most web applications
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: security-chain
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: middleware
+spec:
+  chain:
+    middlewares:
+      - name: rate-limit
+        namespace: ${TRAEFIK_NAMESPACE}
+      - name: security-headers
+        namespace: ${TRAEFIK_NAMESPACE}
+      - name: compress
+        namespace: ${TRAEFIK_NAMESPACE}
+
+---
+# API Security Chain
+# Stricter security for API endpoints
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: api-security-chain
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: middleware
+spec:
+  chain:
+    middlewares:
+      - name: api-rate-limit
+        namespace: ${TRAEFIK_NAMESPACE}
+      - name: security-headers
+        namespace: ${TRAEFIK_NAMESPACE}
+      - name: compress
+        namespace: ${TRAEFIK_NAMESPACE}

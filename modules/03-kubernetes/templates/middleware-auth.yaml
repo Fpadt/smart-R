@@ -1,0 +1,204 @@
+# ==============================================================================
+# Traefik Authentication Middlewares
+# Provides various authentication methods for securing access
+# ==============================================================================
+
+---
+# Basic Authentication Secret
+# Contains the base64-encoded username:password combinations
+apiVersion: v1
+kind: Secret
+metadata:
+  name: basic-auth-secret
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: auth
+type: Opaque
+data:
+  # Default: admin:password (base64 encoded)
+  # Generate with: htpasswd -nb admin password | base64 -w 0
+  # Or use: echo -n "admin:$(openssl passwd -apr1 password)" | base64 -w 0
+  users: ${TRAEFIK_BASIC_AUTH_USERS:-YWRtaW46JGFwcjEkSDY1dkdqQTAkZmhQR3ZYN1VOSFBMdlcuVkxLNlplLwo=}
+
+---
+# Basic Authentication Middleware
+# Protects endpoints with username/password authentication
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: basic-auth
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: middleware
+spec:
+  basicAuth:
+    secret: basic-auth-secret
+    realm: "Traefik Dashboard"
+    removeHeader: true  # Remove auth header after authentication
+
+---
+# Forward Authentication Middleware
+# Delegates authentication to an external service
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: forward-auth
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: middleware
+spec:
+  forwardAuth:
+    address: "${FORWARD_AUTH_URL:-http://auth-service.auth.svc.cluster.local/auth}"
+    trustForwardHeader: true
+    authRequestHeaders:
+      - "Accept"
+      - "Authorization"
+      - "Content-Type"
+      - "X-Forwarded-User"
+    authResponseHeaders:
+      - "X-Auth-User"
+      - "X-Auth-Groups"
+      - "X-Auth-Email"
+
+---
+# OAuth Middleware (for external OAuth providers)
+# Requires additional OAuth proxy service
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: oauth-auth
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: middleware
+spec:
+  forwardAuth:
+    address: "${OAUTH_PROXY_URL:-http://oauth2-proxy.auth.svc.cluster.local:4180/oauth2/auth}"
+    trustForwardHeader: true
+    authRequestHeaders:
+      - "X-Forwarded-User"
+      - "X-Forwarded-Email"
+      - "Authorization"
+      - "Cookie"
+    authResponseHeaders:
+      - "X-Auth-Request-User"
+      - "X-Auth-Request-Email"
+      - "Set-Cookie"
+
+---
+# Admin Authentication Chain
+# Combines IP whitelist with basic auth for admin access
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: admin-auth-chain
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: middleware
+spec:
+  chain:
+    middlewares:
+      - name: ip-whitelist-admin
+        namespace: ${TRAEFIK_NAMESPACE}
+      - name: basic-auth
+        namespace: ${TRAEFIK_NAMESPACE}
+      - name: security-headers
+        namespace: ${TRAEFIK_NAMESPACE}
+
+---
+# API Key Authentication Secret
+# For API endpoints that use API key authentication
+apiVersion: v1
+kind: Secret
+metadata:
+  name: api-key-secret
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: auth
+type: Opaque
+data:
+  # Base64 encoded API keys (one per line)
+  # Format: key1\nkey2\nkey3
+  keys: ${API_KEYS:-}
+
+---
+# Header-based API Key Middleware
+# Validates API keys sent in X-API-Key header
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: api-key-auth
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: middleware
+spec:
+  plugin:
+    apikey:
+      headerName: "X-API-Key"
+      secretName: "api-key-secret"
+
+---
+# Mutual TLS (mTLS) Middleware
+# Requires client certificates for authentication
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: mtls-auth
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: middleware
+spec:
+  headers:
+    customRequestHeaders:
+      X-Client-Cert-Verify: "SUCCESS"
+      X-Client-Cert-Subject: "%{SSL_CLIENT_S_DN}"
+      X-Client-Cert-Issuer: "%{SSL_CLIENT_I_DN}"
+
+---
+# LDAP Authentication (requires external LDAP auth service)
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: ldap-auth
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: middleware
+spec:
+  forwardAuth:
+    address: "${LDAP_AUTH_URL:-http://ldap-auth.auth.svc.cluster.local/auth}"
+    trustForwardHeader: true
+    authRequestHeaders:
+      - "Authorization"
+      - "X-Forwarded-User"
+    authResponseHeaders:
+      - "X-Auth-User"
+      - "X-Auth-Groups"
+
+---
+# Dashboard Authentication
+# Specifically for Traefik dashboard access
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: dashboard-auth
+  namespace: ${TRAEFIK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: middleware
+spec:
+  chain:
+    middlewares:
+      - name: rate-limit
+        namespace: ${TRAEFIK_NAMESPACE}
+      - name: basic-auth
+        namespace: ${TRAEFIK_NAMESPACE}
+      - name: security-headers
+        namespace: ${TRAEFIK_NAMESPACE}

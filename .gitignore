@@ -1,1 +1,38 @@
-modules/04-ingress-controller/.env
+# Environment files
+.env
+*.env
+!.env.example
+
+# Logs
+logs/
+*.log
+
+# Backups
+backups/
+*.backup
+
+# Temporary files
+tmp/
+*.tmp
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+.vscode/
+.idea/
+*.sublime-*
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Archives
+*.tar.gz
+*.zip
+*.7z

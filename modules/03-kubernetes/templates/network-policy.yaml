@@ -1,0 +1,315 @@
+# ==============================================================================
+# K3s Network Security Policies
+# This file implements a defense-in-depth network security strategy
+# ==============================================================================
+
+---
+# Default Deny-All Policy for Applications Namespace
+# This creates a secure baseline - all traffic is blocked by default
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: applications
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+
+---
+# Allow DNS Resolution for All Pods
+# Pods need to resolve DNS names for service discovery
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: applications
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+
+---
+# Allow Communication Within Applications Namespace
+# Pods in the same namespace can communicate with each other
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+  namespace: applications
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: applications
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: applications
+
+---
+# Allow Ingress Traffic from Traefik (K3s default ingress controller)
+# Allows external traffic to reach applications through the ingress controller
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-traefik
+  namespace: applications
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: web  # Label your web applications
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: traefik
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 8080  # Common application port
+
+---
+# Allow Applications to Access External HTTPS Services
+# For applications that need to make outbound HTTPS calls (APIs, downloads, etc.)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-external-https
+  namespace: applications
+spec:
+  podSelector:
+    matchLabels:
+      network-policy: allow-external  # Label pods that need external access
+  policyTypes:
+  - Egress
+  egress:
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+
+---
+# Allow Database Access (if using databases)
+# Restrict database access to only applications that need it
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-database-access
+  namespace: applications
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: database
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/component: web
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/component: api
+    ports:
+    - protocol: TCP
+      port: 5432  # PostgreSQL
+    - protocol: TCP
+      port: 3306  # MySQL
+    - protocol: TCP
+      port: 6379  # Redis
+    - protocol: TCP
+      port: 27017 # MongoDB
+
+---
+# Allow Monitoring and Metrics Collection
+# For Prometheus, Grafana, and other monitoring tools
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-monitoring
+  namespace: applications
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: monitoring
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 8080
+    - protocol: TCP
+      port: 9090  # Prometheus
+    - protocol: TCP
+      port: 3000  # Grafana
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: applications
+    ports:
+    - protocol: TCP
+      port: 8080
+    - protocol: TCP
+      port: 9090
+
+---
+# System Namespace Policy - Protect kube-system
+# Highly restrictive policy for system components
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kube-system-default-deny
+  namespace: kube-system
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+
+---
+# Allow kube-system Essential Communications
+# DNS, API server access, and essential system communications
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kube-system-essential
+  namespace: kube-system
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector: {}  # Allow from any namespace for system services
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 6443  # Kubernetes API
+    - protocol: TCP
+      port: 10250 # Kubelet
+    - protocol: TCP
+      port: 10259 # kube-scheduler
+    - protocol: TCP
+      port: 10257 # kube-controller-manager
+  egress:
+  - to: []  # Allow all egress for system pods
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 6443  # Kubernetes API
+    - protocol: TCP
+      port: 10250 # Kubelet
+    - protocol: TCP
+      port: 2379  # etcd
+    - protocol: TCP
+      port: 2380  # etcd peer
+    - protocol: UDP
+      port: 8472  # VXLAN for Flannel
+  # Allow ALL egress for system components (they need broad access)
+  - to: []
+
+---
+# Allow LoadBalancer and NodePort Access
+# For services exposed via LoadBalancer or NodePort
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-loadbalancer
+  namespace: applications
+spec:
+  podSelector:
+    matchLabels:
+      service-type: loadbalancer
+  policyTypes:
+  - Ingress
+  ingress:
+  - from: []  # Allow from anywhere for LoadBalancer services
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 443
+
+---
+# Development Environment Policy (Optional - for non-production)
+# More permissive policy for development workloads
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: development-allow-all
+  namespace: development
+spec:
+  podSelector:
+    matchLabels:
+      environment: development
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from: []
+  egress:
+  - to: []
+
+---
+# Emergency Break-Glass Policy (Commented out by default)
+# Uncomment this to temporarily disable network policies in emergencies
+# apiVersion: networking.k8s.io/v1
+# kind: NetworkPolicy
+# metadata:
+#   name: emergency-allow-all
+#   namespace: applications
+# spec:
+#   podSelector: {}
+#   policyTypes:
+#   - Ingress
+#   - Egress
+#   ingress:
+#   - from: []
+#   egress:
+#   - to: []
